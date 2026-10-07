@@ -25,7 +25,9 @@ Photos load live from dermnetnz.org, so you need an internet connection.
   - *Type & pick* – type to search the full list of diagnoses and pick one (no options to jog memory).
   - *Multiple choice* – four options, built from true look-alikes.
   - *Flip* – reveal and grade yourself.
-- **Scoring:** a look-alike from that card's differential counts as "close", not just wrong.
+- **Scoring:** the exact diagnosis is correct. A *variant of the same disease* (for example Scalp or Genital psoriasis
+  on a Plaque psoriasis card) also counts as correct, with a note saying so. Variants are found by dropping site and
+  age words from the names. A look-alike or a different subtype (Guttate psoriasis) is "close" but still a miss.
 - **Spaced repetition:** Again / Hard / Good / Easy schedules each card. Misses return later in the same session.
 - **Progress:** accuracy by topic and difficulty, weakest cards, and which diagnoses you mix up. Stored in your
   browser (localStorage); use Export/Import on the Progress page to move it between devices.

@@ -122,14 +122,30 @@
     return LABELS.find((l) => l.n === n) || null;
   };
 
+  // Variants of one disease (Scalp psoriasis, Genital psoriasis, Plaque psoriasis...): drop site and age words
+  // and compare what is left. Only names are compared; aliases would link unrelated diagnoses.
+  const MODIFIERS = new Set(('scalp facial face genital vulval vulvar penile perianal extragenital nipple hand hands foot feet palmar plantar palms soles palm sole ' +
+    'eyelid periocular ear lip limbs limb leg legs arm arms torso trunk children child childhood paediatric pediatric adult adults pregnancy plaque chronic ' +
+    'cutaneous vulgaris flexural inverse skin colour color of the in on and with from to a').split(' '));
+  const TOO_GENERIC = new Set(('dermatitis eczema ulcer ulcers cyst cysts infection infections tumor tumors naevus naevi nevus lesion lesions rash erythema ' +
+    'keratosis papules papule nodule nodules allergy lymphoma sarcoma carcinoma cancer').split(' '));
+  const baseDisease = (card) => {
+    const words = norm(card.name.replace(/\(.*?\)/g, ' ')).split(' ').filter((w) => w && !MODIFIERS.has(w));
+    const key = words.sort().join(' ');
+    return TOO_GENERIC.has(key) ? '' : key;
+  };
+  const BASE = new Map(CARDS.map((c) => [c.id, baseDisease(c)]));
+  const isVariant = (a, b) => a.id !== b.id && !!BASE.get(a.id) && BASE.get(a.id) === BASE.get(b.id);
+
   const relatedIds = (card) => new Set(card.dx.filter((d) => d.id).map((d) => d.id));
   const GENERIC = new Set(['syndrome', 'disease', 'infection', 'reaction', 'cutaneous', 'disorder', 'dermatosis', 'eruption', 'children', 'pustulosis', 'induced', 'allergy']);
   const keyTerms = (card) => new Set(norm(card.name).split(' ').filter((w) => w.length >= 7 && !GENERIC.has(w)).map((w) => w.slice(0, 7)));
   function judge(card, pickedId) {
     if (pickedId === card.id) return 'correct';
     const picked = BY_ID.get(pickedId);
+    if (picked && isVariant(card, picked)) return 'variant';
     if (relatedIds(card).has(pickedId) || (picked && relatedIds(picked).has(card.id))) return 'close';
-    // Variants of one disease (Scalp psoriasis vs Plaque psoriasis) in the same topic also count as close.
+    // Different diagnoses that share a key word in the same topic (e.g. two carcinomas) count as close.
     if (picked && picked.cat === card.cat) {
       const mine = keyTerms(card);
       if ([...keyTerms(picked)].some((t) => mine.has(t))) return 'close';
@@ -258,7 +274,7 @@
 
   function makeOptions(card) {
     const picks = new Set([card.id]);
-    const add = (list) => { for (const c of shuffle(list)) if (picks.size < 4) picks.add(c.id); };
+    const add = (list) => { for (const c of shuffle(list)) if (picks.size < 4 && !isVariant(card, c)) picks.add(c.id); };
     add(card.dx.filter((d) => d.id).map((d) => BY_ID.get(d.id)));
     add(CARDS.filter((c) => c.dx.some((d) => d.id === card.id)));
     add(CARDS.filter((c) => c.cat === card.cat && c.lvl === card.lvl));
@@ -428,7 +444,9 @@
     if (cur.phase !== 'ask') return;
     cur.phase = 'revealed';
     cur.pickedId = pickedId;
-    cur.verdict = pickedId === null ? 'skipped' : judge(cur.card, pickedId);
+    const verdict = pickedId === null ? 'skipped' : judge(cur.card, pickedId);
+    cur.variant = verdict === 'variant';
+    cur.verdict = cur.variant ? 'correct' : verdict;
     showReveal();
   }
 
@@ -444,7 +462,9 @@
     const picked = pickedId && BY_ID.get(pickedId);
     const related = relatedIds(card);
     const msg = {
-      correct: '✓ Correct',
+      correct: cur.variant
+        ? `✓ Counted as correct. ${esc(picked.name)} is a variant of this diagnosis, which DermNet files under “${esc(card.name)}”. Worth knowing the specific label too.`
+        : '✓ Correct',
       close: `≈ Close. ${esc(picked?.name || '')} is a look-alike or a closely related diagnosis, but it's not the answer.`,
       wrong: `✗ Not quite. You chose ${esc(picked?.name || '')}.`,
       skipped: 'Answer revealed',
