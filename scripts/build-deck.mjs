@@ -131,6 +131,49 @@ async function main() {
   }
   cards.push(...extended.values());
 
+  // ---- merge cards that are really the same photos under two names (singular/plural, gallery vs. topic, Löfgren vs. EN).
+  // The loser's name becomes an accepted alias of the survivor. Two curated cards are never merged.
+  const isCurated = (c) => curatedIds.has(c.id);
+  const stems = (name) => new Set(normName(name).split(' ').filter((w) => w.length >= 3).map((w) => w.slice(0, 5)));
+  const nameContains = (x, y) => {
+    const [p, q] = [stems(x), stems(y)];
+    const [small, big] = p.size <= q.size ? [p, q] : [q, p];
+    return small.size > 0 && [...small].every((w) => big.has(w));
+  };
+  let mergedByPhotos = 0;
+  for (let changed = true; changed;) {
+    changed = false;
+    const byUrl = new Map();
+    for (const c of cards) for (const i of c.images) (byUrl.get(i.u) ?? byUrl.set(i.u, []).get(i.u)).push(c);
+    for (const a of cards) {
+      if (a.dead) continue;
+      const shared = new Map();
+      for (const i of a.images) for (const b of byUrl.get(i.u)) if (b !== a && !b.dead) shared.set(b, (shared.get(b) || 0) + 1);
+      for (const [b, n] of shared) {
+        if (n / Math.min(a.images.length, b.images.length) < 0.5 || (isCurated(a) && isCurated(b))) continue;
+        // One reused example photo is not enough: different diagnoses often share an illustration.
+        if (n < 2 && !nameContains(a.name, b.name)) continue;
+        const [keep, lose] = isCurated(a) ? [a, b] : isCurated(b) ? [b, a]
+          : a.images.length !== b.images.length ? (a.images.length > b.images.length ? [a, b] : [b, a])
+          : (a.name.length <= b.name.length ? [a, b] : [b, a]);
+        const have = new Set(keep.images.map((i) => i.u));
+        keep.images.push(...lose.images.filter((i) => !have.has(i.u)));
+        keep.images = keep.images.slice(0, EXTENDED_MAX_IMAGES);
+        keep.alt = [...new Set([...keep.alt, lose.name, ...lose.alt])].filter((x) => normName(x) !== normName(keep.name));
+        keep.rawDx.push(...lose.rawDx);
+        lose.dead = true;
+        report.push(`MERGE ${lose.id} ("${lose.name}") -> ${keep.id} ("${keep.name}") [${n} shared photos]`);
+        mergedByPhotos++;
+        changed = true;
+        break;
+      }
+      if (changed) break;
+    }
+  }
+  const live = cards.filter((c) => !c.dead);
+  cards.length = 0;
+  cards.push(...live);
+
   // ---- resolve look-alikes now that the full card list is known
   const ids = new Set(cards.map((c) => c.id));
   const nameToId = new Map();
@@ -180,7 +223,7 @@ async function main() {
   const imgs = deck.reduce((n, d) => n + d.images.length, 0);
   const lvl = [1, 2, 3, 4].map((l) => deck.filter((d) => d.lvl === l).length);
   console.log(`Wrote data/deck.js: ${deck.length} diagnoses (core ${lvl[0]}, intermediate ${lvl[1]}, advanced ${lvl[2]}, extended ${lvl[3]}), ${imgs} photos.`);
-  console.log(`Extended: ${extended.size} added; skipped ${skipped.notDiagnosis} non-diagnosis pages, ${skipped.duplicateOfCurated} duplicates of curated cards, ${skipped.merged} merged into another card, ${skipped.noRelevantImages} with no matching photo.`);
+  console.log(`Extended: ${extended.size} added (${mergedByPhotos} of those or curated cards merged because they shared photos); skipped ${skipped.notDiagnosis} non-diagnosis pages, ${skipped.duplicateOfCurated} duplicates of curated cards, ${skipped.merged} merged into another card, ${skipped.noRelevantImages} with no matching photo.`);
   if (problems.length) { console.log('\nCurated problems:'); problems.forEach((p) => console.log('  ' + p)); }
 
   if (wantReport) {

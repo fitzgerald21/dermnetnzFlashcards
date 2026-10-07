@@ -2,7 +2,7 @@
 
 Image flashcards for dermatology board prep. Each card shows a clinical photo from
 [DermNet](https://dermnetnz.org); you name the diagnosis, then see the look-alikes to rule out
-and a board pearl. Nearly 1,000 diagnoses and about 4,400 photos, rare conditions included.
+and a board pearl. About 950 diagnoses and 4,300 photos, rare conditions included.
 
 ## Run it
 
@@ -17,7 +17,7 @@ Photos load live from dermnetnz.org, so you need an internet connection.
 ## Studying
 
 - **Difficulty:** Core (118), Intermediate (93) and Advanced (42) are hand-reviewed, each with look-alikes and a
-  pearl. **Extended** (about 720) is the rest of DermNet's diagnoses, rare ones included: photos only, no pearl, and
+  pearl. **Extended** (about 700) is the rest of DermNet's diagnoses, rare ones included: photos only, no pearl, and
   look-alikes only where DermNet's own page lists a differential. Combine any tiers.
 - **Topics:** 23 categories (papulosquamous, bullous, genodermatoses, nail, and so on). Extended cards are sorted
   by keyword, so a few land in the wrong topic or in "Other".
@@ -49,7 +49,9 @@ difficulty, look-alikes, and the pearl. `scripts/build-deck.mjs` then reads **ev
    headings ("Who gets...", "Clinical features...", "Differential diagnosis...") rather than treatment ones
    ("Side effects...", "How to take..."). Drugs, procedures, plants, allergens, dermoscopy and histology pages are
    dropped (rules in `scripts/lib/classify.mjs`).
-3. Duplicates of curated cards are skipped. Photos whose captions name a different condition are removed.
+3. Duplicates of curated cards are skipped. Photos whose captions name a different condition are removed. Cards that
+   are really the same photos under two names ("Piezogenic papule" / "papules", Löfgren syndrome / erythema nodosum)
+   are merged, and the merged name is kept as an accepted alias.
 4. Extended look-alikes are read from the page's "differential diagnosis" section; the topic is guessed from the name.
 
 ```
