@@ -1,0 +1,12 @@
+{
+  "name": "dermnetnz-flashcards",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Board-level dermatology image flashcards using DermNet photos.",
+  "scripts": {
+    "build": "node scripts/build-deck.mjs",
+    "build:refresh": "node scripts/build-deck.mjs --refresh",
+    "start": "python3 -m http.server 8000"
+  }
+}
