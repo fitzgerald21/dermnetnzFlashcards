@@ -26,8 +26,11 @@ Photos load live from dermnetnz.org, so you need an internet connection.
 - **Spaced repetition:** Again / Hard / Good / Easy schedules each card. Misses return later in the same session.
 - **Progress:** accuracy by topic and difficulty, weakest cards, and which diagnoses you mix up. Stored in your
   browser (localStorage); use Export/Import on the Progress page to move it between devices.
+- **Photos:** each question shows one photo and nothing hints that there are more. "Show more photos" opens
+  the rest of that diagnosis's photos, before or after you answer; "Hide extra photos" returns to the original.
 - **Keys:** `Enter` accepts the suggested rating, `1`–`4` rate or choose, `?` = I don't know,
-  `←`/`→` change photo (with an empty answer box), click a photo to enlarge.
+  `M` shows or hides extra photos (not while typing an answer), `←`/`→` move between them once open,
+  click a photo to enlarge.
 
 ## How the deck is made
 

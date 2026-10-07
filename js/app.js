@@ -255,9 +255,12 @@
   function renderStudy() {
     const id = session.queue[session.idx];
     const card = BY_ID.get(id);
+    const first = questionPhoto(card);
     cur = {
       card,
-      img: Math.floor(Math.random() * card.images.length),
+      first,            // the one photo this question is tied to
+      img: first,       // the photo currently on screen (differs only while browsing extras)
+      more: false,
       phase: 'ask',
       verdict: null,
       pickedId: null,
@@ -267,20 +270,47 @@
     preloadNext();
   }
 
+  const questionPhoto = (card) => {
+    const picks = (session.picks ||= {});
+    return (picks[card.id] ??= Math.floor(Math.random() * card.images.length));
+  };
+
   function preloadNext() {
     const nextId = session.queue[session.idx + 1];
     const next = nextId && BY_ID.get(nextId);
-    if (next) new Image().src = imgUrl(next.images[0].u);
+    if (next) new Image().src = imgUrl(next.images[questionPhoto(next)].u);
   }
 
   function photoHtml() {
-    const { card, img, phase } = cur;
-    const many = card.images.length > 1;
+    const { card, img } = cur;
     return `<div class="photo" id="photo">
       <img id="main-img" src="${esc(imgUrl(card.images[img].u))}" alt="Skin photograph to identify" referrerpolicy="no-referrer">
-      ${many ? `<button class="nav prev" data-action="img-prev" aria-label="Previous image">&#8249;</button><button class="nav next" data-action="img-next" aria-label="Next image">&#8250;</button>
-      <span class="count">${img + 1} / ${card.images.length}</span>` : ''}
     </div>`;
+  }
+
+  // Extra photos stay hidden until asked for, before or after answering.
+  function moreHtml() {
+    const { card, img, more } = cur;
+    const n = card.images.length;
+    if (n < 2) return '';
+    if (!more) return `<button class="btn small" data-action="more" aria-expanded="false">Show more photos</button>`;
+    return `<div class="thumbs" role="group" aria-label="Other photos of this diagnosis">${card.images.map((im, i) => `<button data-thumb="${i}" aria-current="${i === img}" aria-label="Photo ${i + 1} of ${n}"><img src="${esc(imgUrl(im.u))}" alt="" referrerpolicy="no-referrer"></button>`).join('')}</div>
+      <button class="btn ghost small" data-action="more" aria-expanded="true">Hide extra photos</button>`;
+  }
+
+  function showImage(i) {
+    cur.img = i;
+    $('#photo').outerHTML = photoHtml();
+    wirePhoto();
+    $('#more').innerHTML = moreHtml();
+    if (cur.phase === 'revealed') $('#reveal').innerHTML = revealHtml(); // the caption follows the photo on screen
+  }
+
+  function toggleMore() {
+    if (cur.card.images.length < 2) return;
+    cur.more = !cur.more;
+    if (!cur.more && cur.img !== cur.first) showImage(cur.first);
+    else $('#more').innerHTML = moreHtml();
   }
 
   // Paint a new card. The photo is built once here and left alone on reveal, so it never reloads or flashes.
@@ -295,6 +325,7 @@
         </div>
         <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${session.idx}"><i style="width:${pct(session.idx, total)}%"></i></div>
         ${photoHtml()}
+        <div id="more" class="more">${moreHtml()}</div>
         <div id="interaction">${askHtml(mode)}</div>
         <div id="reveal"></div>
       </div>`;
@@ -418,7 +449,6 @@
           ${card.alt.length ? `<p class="aka">Also: ${card.alt.map(esc).join(' · ')}</p>` : ''}
         </div>
         ${caption ? `<p class="caption">This photo: ${esc(caption)}${card.images[img].c ? ` <span>(${esc(card.images[img].c)})</span>` : ''}</p>` : ''}
-        ${card.images.length > 1 ? `<div class="thumbs" role="group" aria-label="More photos of this diagnosis">${card.images.map((im, i) => `<button data-thumb="${i}" aria-current="${i === img}" aria-label="Photo ${i + 1}"><img src="${esc(imgUrl(im.u))}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join('')}</div>` : ''}
         ${card.dx.length ? `<div><div class="eyebrow">Look-alikes to rule out</div>
           <div class="dx" style="margin-top:6px">${card.dx.map((d) => {
             const name = d.id ? BY_ID.get(d.id).name : d.text;
@@ -451,16 +481,9 @@
   }
 
   function stepImage(dir) {
+    if (!cur.more) return; // arrows only work once extra photos have been opened
     const n = cur.card.images.length;
-    if (n < 2) return;
-    cur.img = (cur.img + dir + n) % n;
-    const wrap = $('#photo');
-    wrap.outerHTML = photoHtml();
-    wirePhoto();
-    if (cur.phase === 'revealed') {
-      $('#reveal').innerHTML = revealHtml();
-      $('[data-rate].default')?.focus({ preventScroll: true });
-    }
+    showImage((cur.img + dir + n) % n);
   }
 
   function rate(rating) {
@@ -578,8 +601,7 @@
       else if (a === 'skip') next();
       else if (a === 'end') (session.results.length ? setView('summary') : setView('home'));
       else if (a === 'giveup') answer(null);
-      else if (a === 'img-prev') stepImage(-1);
-      else if (a === 'img-next') stepImage(1);
+      else if (a === 'more') toggleMore();
       else if (a === 'export') exportData();
       else if (a === 'reset') { if (confirm('Erase all saved progress? This cannot be undone.')) { state.cards = {}; state.log = {}; save(); renderStats(); } }
     } else if (t.dataset.level) {
@@ -600,12 +622,7 @@
       save(); renderHome();
     } else if (t.dataset.pick) answer(t.dataset.pick);
     else if (t.dataset.rate) rate(Number(t.dataset.rate));
-    else if (t.dataset.thumb) {
-      cur.img = Number(t.dataset.thumb);
-      $('#photo').outerHTML = photoHtml();
-      wirePhoto();
-      $('#reveal').innerHTML = revealHtml();
-    }
+    else if (t.dataset.thumb) showImage(Number(t.dataset.thumb));
   });
 
   document.addEventListener('change', (e) => {
@@ -626,12 +643,14 @@
         return;
       }
       const mode = state.prefs.mode;
-      if (mode === 'mc' && /^[1-4]$/.test(e.key)) answer(cur.options[Number(e.key) - 1]?.id ?? null);
+      if (e.key === 'm' || e.key === 'M') toggleMore();
+      else if (mode === 'mc' && /^[1-4]$/.test(e.key)) answer(cur.options[Number(e.key) - 1]?.id ?? null);
       else if (e.key === '?' || (mode === 'flip' && (e.key === ' ' || e.key === 'Enter'))) { e.preventDefault(); answer(null); }
       else if (e.key === 'ArrowLeft') stepImage(-1);
       else if (e.key === 'ArrowRight') stepImage(1);
     } else {
-      if (/^[1-4]$/.test(e.key)) rate(Number(e.key));
+      if (e.key === 'm' || e.key === 'M') toggleMore();
+      else if (/^[1-4]$/.test(e.key)) rate(Number(e.key));
       else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         if (state.prefs.mode !== 'flip') rate(cur.verdict === 'correct' ? 3 : 1);
