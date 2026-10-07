@@ -1,169 +1,203 @@
 #!/usr/bin/env node
-// Builds data/deck.js from data/diagnoses.mjs by reading each DermNet topic page and
-// collecting its gallery images. Images are NOT downloaded; the app links to DermNet directly.
+// Builds data/deck.js.
 //
-//   node scripts/build-deck.mjs            # fetch (cached) and write data/deck.js
-//   node scripts/build-deck.mjs --refresh  # ignore the cache
+//   1. Curated cards (data/diagnoses.mjs) keep their hand-written pearls and look-alikes.
+//   2. Every other DermNet topic that looks like a diagnosis is added as an "Extended" card (level 4).
+//      Look-alikes come from the topic's own "differential diagnosis" section; there is no pearl.
+//
+// Images are not downloaded; the app links to DermNet directly.
+//
+//   node scripts/build-deck.mjs              # fetch (cached) and write data/deck.js
+//   node scripts/build-deck.mjs --refresh    # ignore the cache
+//   node scripts/build-deck.mjs --report     # also write a classification report to <cache>/report.txt
 //   CACHE_DIR=/some/dir node scripts/build-deck.mjs
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CATEGORIES, DIAGNOSES } from '../data/diagnoses.mjs';
+import { CATEGORIES as CURATED_CATEGORIES, DIAGNOSES } from '../data/diagnoses.mjs';
+import { fetchPage, fetchSlugs, parsePage, pool } from './lib/dermnet.mjs';
+import { categorize, isDiagnosisPage, isGallerySlug, normName, relevantImages, titleFromPage, NOT_A_PHOTO } from './lib/classify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE = process.env.CACHE_DIR || path.join(ROOT, '.cache');
-const ORIGIN = 'https://dermnetnz.org';
-const MAX_IMAGES = 8;
-const CONCURRENCY = 4;
 const refresh = process.argv.includes('--refresh');
+const wantReport = process.argv.includes('--report');
+const CURATED_MAX_IMAGES = 8;
+const EXTENDED_MAX_IMAGES = 10;
+const MAX_LOOKALIKES = 6;
 
-// Non-clinical or off-topic gallery items (histology, culture plates, charts, dermoscopy, X-rays...).
-const NOT_A_PHOTO = new RegExp(
-  [
-    'patholog', 'histolog', 'histopath', 'microscop', 'culture', 'stain', 'h&e', 'dermoscop',
-    'classification', 'score', 'mortality', 'hair cycle', 'diagram', 'figure \\d', '\\btick\\b',
-    'x-?ray', '\\bmri\\b', 'fluorescence', 'mattress', 'eggs', '\\bnits\\b', 'miniaturis',
-  ].join('|'),
-  'i',
-);
-
-const decode = (s) =>
-  s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-   .replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-
-const attr = (tag, name) => {
-  const m = tag.match(new RegExp(`\\s${name}="([^"]*)"`, 'i'));
-  return m ? decode(m[1]) : '';
-};
-
-async function fetchPage(slug) {
-  const file = path.join(CACHE, `${slug.replace(/\//g, '__')}.html`);
-  if (!refresh && existsSync(file)) return readFile(file, 'utf8');
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const res = await fetch(`${ORIGIN}/topics/${slug}`, {
-        headers: { 'user-agent': 'dermnetnz-flashcards-builder (personal study project)' },
-        signal: AbortSignal.timeout(30000),
-      });
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const html = await res.text();
-      await writeFile(file, html);
-      return html;
-    } catch (err) {
-      if (attempt === 3) throw new Error(`${slug}: ${err.message}`);
-      await new Promise((r) => setTimeout(r, 1000 * attempt));
-    }
-  }
-}
-
-function extractImages(html) {
-  const out = [];
-  const seen = new Set();
-  for (const [tag] of html.matchAll(/<img\b[^>]*js-gallery-image[^>]*>/g)) {
-    const src = attr(tag, 'src');
-    if (!src || seen.has(src)) continue;
-    seen.add(src);
-    out.push({
-      u: src.startsWith('http') ? src : ORIGIN + src,
-      t: attr(tag, 'data-title') || attr(tag, 'alt'),
-      a: attr(tag, 'alt'),
-      c: attr(tag, 'data-copyright'),
-    });
-  }
-  return out;
-}
+const CATEGORIES = { ...CURATED_CATEGORIES, misc: 'Other' };
 
 const humanize = (s) => {
   const t = s.replace(/-/g, ' ');
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
 
-async function pool(items, worker) {
-  const results = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: CONCURRENCY }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        results[i] = await worker(items[i], i);
-      }
-    }),
-  );
-  return results;
-}
-
 async function main() {
-  await mkdir(CACHE, { recursive: true });
-
-  const ids = new Set(DIAGNOSES.map((d) => d.s));
-  if (ids.size !== DIAGNOSES.length) {
-    const dupes = DIAGNOSES.map((d) => d.s).filter((s, i, a) => a.indexOf(s) !== i);
-    throw new Error(`Duplicate slugs: ${dupes.join(', ')}`);
+  // ---- validate the curated list
+  const curatedIds = new Set(DIAGNOSES.map((d) => d.s));
+  if (curatedIds.size !== DIAGNOSES.length) {
+    throw new Error(`Duplicate slugs: ${DIAGNOSES.map((d) => d.s).filter((s, i, a) => a.indexOf(s) !== i).join(', ')}`);
   }
   for (const d of DIAGNOSES) {
-    if (!CATEGORIES[d.c]) throw new Error(`${d.s}: unknown category "${d.c}"`);
+    if (!CURATED_CATEGORIES[d.c]) throw new Error(`${d.s}: unknown category "${d.c}"`);
     if (![1, 2, 3].includes(d.l)) throw new Error(`${d.s}: bad level`);
   }
 
-  const problems = [];
-  const pages = await pool(DIAGNOSES, async (d) => {
+  // ---- read every topic page (cached after the first run)
+  const slugs = await fetchSlugs(CACHE);
+  const pages = new Map();
+  let done = 0;
+  await pool(slugs, 4, async (slug) => {
     try {
-      const html = await fetchPage(d.s);
-      if (!html) return { missing: true, images: [] };
-      return { images: extractImages(html) };
+      const html = await fetchPage(slug, CACHE, { refresh });
+      if (html) pages.set(slug, { slug, ...parsePage(html) });
     } catch (err) {
-      return { error: err.message, images: [] };
+      console.warn(`  skipped ${slug}: ${err.message}`);
     }
+    if (++done % 500 === 0) console.log(`  read ${done}/${slugs.length} pages`);
   });
 
-  const kept = [];
-  DIAGNOSES.forEach((d, i) => {
-    const page = pages[i];
-    if (page.missing) problems.push(`404       ${d.s}`);
-    else if (page.error) problems.push(`ERROR     ${page.error}`);
-    else if (page.images.length === 0) problems.push(`NO IMAGES ${d.s} (dropped from deck)`);
+  const report = [];
+  const problems = [];
+  const cleanImages = (imgs) => imgs.filter((img) => !NOT_A_PHOTO.test(`${img.t} ${img.a}`));
 
-    const images = page.images
-      .filter((img) => !NOT_A_PHOTO.test(`${img.t} ${img.a}`))
+  // ---- curated cards
+  const cards = [];
+  const curatedNames = new Set();
+  for (const d of DIAGNOSES) {
+    const page = pages.get(d.s);
+    if (!page) { problems.push(`404       ${d.s}`); continue; }
+    const images = cleanImages(page.images)
       .filter((img) => !d.f || new RegExp(d.f, 'i').test(`${img.t} ${img.a}`))
       .filter((img) => !d.x || !new RegExp(d.x, 'i').test(`${img.t} ${img.a}`))
-      .slice(0, MAX_IMAGES);
-    if (images.length) kept.push({ d, images });
+      .slice(0, CURATED_MAX_IMAGES);
+    if (!images.length) { problems.push(`NO IMAGES ${d.s} (dropped)`); continue; }
+    cards.push({ id: d.s, name: d.n, cat: d.c, lvl: d.l, alt: d.a ?? [], pearl: d.p, rawDx: (d.d ?? []).map((x) => ({ slug: x })), images });
+    for (const n of [d.n, ...(d.a ?? [])]) curatedNames.add(normName(n));
+    const paren = d.n.match(/^(.*?)\s*\((.+)\)\s*$/);
+    if (paren) { curatedNames.add(normName(paren[1])); curatedNames.add(normName(paren[2])); }
+  }
+
+  // ---- extended cards
+  const extended = new Map(); // normalized name -> card
+  const skipped = { notDiagnosis: 0, duplicateOfCurated: 0, merged: 0, noRelevantImages: 0 };
+  const ordered = [...pages.values()]
+    .filter((p) => !curatedIds.has(p.slug))
+    .sort((a, b) => isGallerySlug(a.slug) - isGallerySlug(b.slug) || a.slug.localeCompare(b.slug));
+
+  for (const page of ordered) {
+    const verdict = isDiagnosisPage(page);
+    const base = isGallerySlug(page.slug) ? cards.find((c) => c.id === page.slug.replace(/-images$/, '')) : null;
+    if (base && verdict.ok) {
+      const spec = DIAGNOSES.find((d) => d.s === base.id);
+      const have = new Set(base.images.map((i) => i.u));
+      const more = cleanImages(page.images)
+        .filter((i) => !have.has(i.u) && (!spec.f || new RegExp(spec.f, 'i').test(`${i.t} ${i.a}`)) && (!spec.x || !new RegExp(spec.x, 'i').test(`${i.t} ${i.a}`)));
+      base.images.push(...more);
+      base.images = base.images.slice(0, EXTENDED_MAX_IMAGES);
+      skipped.merged++;
+      continue;
+    }
+    if (!verdict.ok) { skipped.notDiagnosis++; report.push(`SKIP  ${page.slug}  (${verdict.why})`); continue; }
+    const name = titleFromPage(page);
+    const key = normName(name);
+    if (!key) continue;
+    if (curatedNames.has(key)) { skipped.duplicateOfCurated++; report.push(`DUP   ${page.slug}  = curated "${name}"`); continue; }
+
+    const images = relevantImages(cleanImages(page.images), name, { fallbackAll: verdict.strong });
+    if (!images.length) { skipped.noRelevantImages++; report.push(`NOIMG ${page.slug}  (no photo matches "${name}")`); continue; }
+
+    const existing = extended.get(key);
+    if (existing) {
+      const have = new Set(existing.images.map((i) => i.u));
+      existing.images.push(...images.filter((i) => !have.has(i.u)));
+      existing.images = existing.images.slice(0, EXTENDED_MAX_IMAGES);
+      existing.rawDx.push(...page.differential);
+      skipped.merged++;
+      continue;
+    }
+    extended.set(key, {
+      id: page.slug,
+      name,
+      cat: categorize(name, page.slug),
+      lvl: 4,
+      alt: [],
+      pearl: '',
+      rawDx: page.differential,
+      images: images.slice(0, EXTENDED_MAX_IMAGES),
+    });
+  }
+  cards.push(...extended.values());
+
+  // ---- resolve look-alikes now that the full card list is known
+  const ids = new Set(cards.map((c) => c.id));
+  const nameToId = new Map();
+  for (const c of cards) for (const n of [c.name, ...c.alt]) nameToId.set(normName(n), c.id);
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const curatedName = new Map(DIAGNOSES.map((d) => [d.s, d.n]));
+
+  const deck = cards.map((c) => {
+    const dx = [];
+    const seen = new Set([c.id]);
+    for (const r of c.rawDx) {
+      let id = r.slug && ids.has(r.slug) ? r.slug : null;
+      if (!id && r.slug) { // the slug may be a gallery page that was merged away; match on its title instead
+        const t = pages.get(r.slug);
+        if (t) id = nameToId.get(normName(titleFromPage(t))) ?? null;
+      }
+      if (!id && r.text) id = nameToId.get(normName(r.text)) ?? null;
+      if (id) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        dx.push({ id });
+      } else {
+        const label = r.text || curatedName.get(r.slug) || (r.slug ? humanize(r.slug) : '');
+        const k = `t:${normName(label)}`;
+        if (!label || seen.has(k)) continue;
+        seen.add(k);
+        dx.push({ text: label.charAt(0).toUpperCase() + label.slice(1) });
+      }
+      if (c.lvl === 4 && dx.length >= MAX_LOOKALIKES) break;
+    }
+    const out = {
+      id: c.id, name: c.name, cat: c.cat, lvl: c.lvl, dx,
+      images: c.images.map(({ u, t, a, c: credit }) => {
+        const img = { u: u.replace(ORIGIN_PREFIX, ''), cap: a || t };
+        if (credit && credit !== '© DermNet') img.c = credit;
+        return img;
+      }),
+    };
+    if (c.alt.length) out.alt = c.alt;
+    if (c.pearl) out.pearl = c.pearl;
+    return out;
   });
 
-  // Look-alikes become deck ids only when that card survived; otherwise they stay as free text.
-  const keptIds = new Set(kept.map((k) => k.d.s));
-  const deck = kept.map(({ d, images }) => ({
-    id: d.s,
-    name: d.n,
-    cat: d.c,
-    lvl: d.l,
-    alt: d.a ?? [],
-    dx: (d.d ?? []).map((x) => (keptIds.has(x) ? { id: x } : { text: DIAGNOSES.find((e) => e.s === x)?.n ?? humanize(x) })),
-    pearl: d.p,
-    images: images.map(({ u, t, a, c }) => ({ u: u.replace(ORIGIN, ''), cap: a || t, c })),
-  }));
-
-  const freeText = new Set();
-  for (const d of deck) for (const x of d.dx) if (x.text) freeText.add(x.text);
-
-  const banner = '// Generated by scripts/build-deck.mjs from data/diagnoses.mjs. Do not edit by hand.\n';
-  const body =
-    `window.DECK = ${JSON.stringify({ categories: CATEGORIES, cards: deck })};\n`;
-  await writeFile(path.join(ROOT, 'data', 'deck.js'), banner + body);
+  const banner = '// Generated by scripts/build-deck.mjs. Do not edit by hand.\n';
+  await writeFile(path.join(ROOT, 'data', 'deck.js'), `${banner}window.DECK = ${JSON.stringify({ categories: CATEGORIES, cards: deck })};\n`);
 
   const imgs = deck.reduce((n, d) => n + d.images.length, 0);
-  console.log(`Wrote data/deck.js: ${deck.length} diagnoses, ${imgs} images.`);
-  if (problems.length) {
-    console.log(`\n${problems.length} problem(s):`);
-    problems.forEach((p) => console.log('  ' + p));
+  const lvl = [1, 2, 3, 4].map((l) => deck.filter((d) => d.lvl === l).length);
+  console.log(`Wrote data/deck.js: ${deck.length} diagnoses (core ${lvl[0]}, intermediate ${lvl[1]}, advanced ${lvl[2]}, extended ${lvl[3]}), ${imgs} photos.`);
+  console.log(`Extended: ${extended.size} added; skipped ${skipped.notDiagnosis} non-diagnosis pages, ${skipped.duplicateOfCurated} duplicates of curated cards, ${skipped.merged} merged into another card, ${skipped.noRelevantImages} with no matching photo.`);
+  if (problems.length) { console.log('\nCurated problems:'); problems.forEach((p) => console.log('  ' + p)); }
+
+  if (wantReport) {
+    const cats = {};
+    for (const d of deck) cats[d.cat] = (cats[d.cat] || 0) + 1;
+    const lines = [
+      `categories: ${JSON.stringify(cats)}`, '',
+      'EXTENDED CARDS (id | name | category | photos | look-alikes)',
+      ...deck.filter((d) => d.lvl === 4).map((d) => `${d.id} | ${d.name} | ${d.cat} | ${d.images.length} | ${d.dx.length}`),
+      '', ...report,
+    ];
+    await writeFile(path.join(CACHE, 'report.txt'), lines.join('\n'));
+    console.log(`Report written to ${path.join(CACHE, 'report.txt')}`);
   }
-  console.log(`\n${freeText.size} look-alikes are free text (not in the deck), e.g.:`);
-  console.log('  ' + [...freeText].slice(0, 12).join('; '));
 }
+
+const ORIGIN_PREFIX = 'https://dermnetnz.org';
 
 main().catch((err) => {
   console.error(err);

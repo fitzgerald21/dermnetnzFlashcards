@@ -5,12 +5,15 @@
   const STORE_KEY = 'dermflash.v1';
   const DAY = 864e5;
   const { categories: CATS, cards: CARDS } = window.DECK;
+  for (const c of CARDS) { c.alt ||= []; c.dx ||= []; c.pearl ||= ''; }
   const BY_ID = new Map(CARDS.map((c) => [c.id, c]));
   const LEVELS = {
     1: { name: 'Core', blurb: 'Classic, bread-and-butter presentations you must not miss.' },
     2: { name: 'Intermediate', blurb: 'Board-level distinctions, variants and associations.' },
     3: { name: 'Advanced', blurb: 'Rare, syndromic or high-yield-but-obscure diagnoses.' },
+    4: { name: 'Extended', blurb: 'The rest of DermNet, rare conditions included. Photos only, no pearl.' },
   };
+  const LEVEL_IDS = Object.keys(LEVELS).map(Number);
 
   // ---------- helpers ----------
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -33,12 +36,17 @@
   const today = () => dayKey();
 
   // ---------- persistence ----------
-  const DEFAULT_PREFS = { levels: [1, 2, 3], cats: [], mode: 'type', queue: 'smart', size: 20 };
+  const DEFAULT_PREFS = { v: 2, levels: [1, 2, 3, 4], cats: [], mode: 'type', queue: 'smart', size: 20 };
   const load = () => {
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
   };
   const saved = load();
   const state = { cards: saved.cards || {}, log: saved.log || {}, prefs: { ...DEFAULT_PREFS, ...(saved.prefs || {}) } };
+  // Before the Extended tier existed, "all levels" was [1, 2, 3]. Keep such users on "all".
+  if (!saved.prefs?.v) {
+    if ([1, 2, 3].every((l) => state.prefs.levels.includes(l))) state.prefs.levels = [1, 2, 3, 4];
+    state.prefs.v = 2;
+  }
   const save = () => {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* private mode etc. */ }
   };
@@ -115,10 +123,17 @@
   };
 
   const relatedIds = (card) => new Set(card.dx.filter((d) => d.id).map((d) => d.id));
+  const GENERIC = new Set(['syndrome', 'disease', 'infection', 'reaction', 'cutaneous', 'disorder', 'dermatosis', 'eruption', 'children', 'pustulosis', 'induced', 'allergy']);
+  const keyTerms = (card) => new Set(norm(card.name).split(' ').filter((w) => w.length >= 7 && !GENERIC.has(w)).map((w) => w.slice(0, 7)));
   function judge(card, pickedId) {
     if (pickedId === card.id) return 'correct';
     const picked = BY_ID.get(pickedId);
     if (relatedIds(card).has(pickedId) || (picked && relatedIds(picked).has(card.id))) return 'close';
+    // Variants of one disease (Scalp psoriasis vs Plaque psoriasis) in the same topic also count as close.
+    if (picked && picked.cat === card.cat) {
+      const mine = keyTerms(card);
+      if ([...keyTerms(picked)].some((t) => mine.has(t))) return 'close';
+    }
     return 'wrong';
   }
 
@@ -178,12 +193,12 @@
         <section class="panel hero stack">
           <div>
             <h1>What's the diagnosis?</h1>
-            <p class="lede">${CARDS.length} diagnoses, ${CARDS.reduce((n, c) => n + c.images.length, 0).toLocaleString()} clinical photos from DermNet, each with look-alikes and a board pearl. Spaced repetition brings back what you miss.</p>
+            <p class="lede">${CARDS.length.toLocaleString()} diagnoses and ${CARDS.reduce((n, c) => n + c.images.length, 0).toLocaleString()} clinical photos from DermNet. ${CARDS.filter((c) => c.pearl).length} of them are hand-reviewed with look-alikes and a board pearl; the rest add breadth, including rare conditions. Spaced repetition brings back what you miss.</p>
           </div>
 
           <fieldset class="fieldset"><legend>Difficulty</legend>
             <div class="levels">
-              ${[1, 2, 3].map((l) => `<button type="button" class="level-btn" data-level="${l}" aria-pressed="${p.levels.includes(l)}">
+              ${LEVEL_IDS.map((l) => `<button type="button" class="level-btn" data-level="${l}" aria-pressed="${p.levels.includes(l)}">
                 <strong>${LEVELS[l].name} <span class="badge l${l}">${CARDS.filter((c) => c.lvl === l).length}</span></strong><span>${LEVELS[l].blurb}</span></button>`).join('')}
             </div>
           </fieldset>
@@ -430,7 +445,7 @@
     const related = relatedIds(card);
     const msg = {
       correct: '✓ Correct',
-      close: `≈ Close. ${esc(picked?.name || '')} is on the differential, but it's not the answer.`,
+      close: `≈ Close. ${esc(picked?.name || '')} is a look-alike or a closely related diagnosis, but it's not the answer.`,
       wrong: `✗ Not quite. You chose ${esc(picked?.name || '')}.`,
       skipped: 'Answer revealed',
     }[verdict];
@@ -448,13 +463,13 @@
           <h2>${esc(card.name)}</h2>
           ${card.alt.length ? `<p class="aka">Also: ${card.alt.map(esc).join(' · ')}</p>` : ''}
         </div>
-        ${caption ? `<p class="caption">This photo: ${esc(caption)}${card.images[img].c ? ` <span>(${esc(card.images[img].c)})</span>` : ''}</p>` : ''}
+        ${caption ? `<p class="caption">This photo: ${esc(caption)} <span>(${esc(card.images[img].c || '© DermNet')})</span></p>` : ''}
         ${card.dx.length ? `<div><div class="eyebrow">Look-alikes to rule out</div>
           <div class="dx" style="margin-top:6px">${card.dx.map((d) => {
             const name = d.id ? BY_ID.get(d.id).name : d.text;
             return `<span class="${d.id && d.id === pickedId ? 'hit' : ''}">${esc(name)}</span>`;
           }).join('')}</div></div>` : ''}
-        <div class="pearl">${esc(card.pearl)}</div>
+        ${card.pearl ? `<div class="pearl">${esc(card.pearl)}</div>` : '<p class="muted small">No pearl for this one. The DermNet page below has the details.</p>'}
         <p class="small">Image sourced from <a href="${ORIGIN}/topics/${esc(card.id)}" target="_blank" rel="noopener">DermNet: ${esc(card.name)} ↗</a></p>
         <div>
           <div class="eyebrow" style="margin-bottom:6px">${flipMode ? 'How did you do?' : 'Schedule next review'}</div>
@@ -570,7 +585,7 @@
           </div>
         </section>
         <section class="panel stack"><h2>By topic</h2><div class="bars">${group((c) => c.cat, CATS).map(bar).join('')}</div></section>
-        <section class="panel stack"><h2>By difficulty</h2><div class="bars">${group((c) => String(c.lvl), Object.fromEntries([1, 2, 3].map((l) => [l, LEVELS[l].name]))).map(bar).join('')}</div></section>
+        <section class="panel stack"><h2>By difficulty</h2><div class="bars">${group((c) => String(c.lvl), Object.fromEntries(LEVEL_IDS.map((l) => [l, LEVELS[l].name]))).map(bar).join('')}</div></section>
         <section class="panel stack"><h2>Weakest cards</h2>
           ${weak.length ? `<ul class="list">${weak.map(([c, s]) => `<li><span>${esc(c.name)}</span><span class="muted small">${s.ok}/${s.n} right</span></li>`).join('')}</ul>` : '<p class="muted">Nothing yet. Misses show up here.</p>'}
         </section>
