@@ -627,6 +627,8 @@
   document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-action],[data-level],[data-cat],[data-cats],[data-pick],[data-rate],[data-thumb]');
     if (!t) return;
+    const d = t.dataset;
+    track(d.action || (d.level ? 'level' : d.cat || d.cats ? 'topic' : d.pick ? 'answer' : d.rate ? 'rate' : 'photo'));
     if (t.dataset.action) {
       const a = t.dataset.action;
       if (a === 'home') { e.preventDefault(); setView('home'); }
