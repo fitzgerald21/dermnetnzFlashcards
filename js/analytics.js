@@ -1,7 +1,7 @@
 // Anonymous usage counts via GoatCounter (no cookies, no personal data).
 // Set GOATCOUNTER_CODE to your site code (the "xxx" in xxx.goatcounter.com) to turn it on.
 (function () {
-  const GOATCOUNTER_CODE = '';
+  const GOATCOUNTER_CODE = 'dermnetnzflashcards';
 
   window.track = function () {};
   if (!GOATCOUNTER_CODE || /^(localhost|127\.|\[::1\])/.test(location.hostname)) return;
