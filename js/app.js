@@ -3,6 +3,7 @@
 
   const ORIGIN = 'https://dermnetnz.org';
   const STORE_KEY = 'dermflash.v1';
+  const SESSION_KEY = 'dermflash.session.v1'; // the quiz in progress, kept apart from progress so Export/Import ignore it
   const DAY = 864e5;
   const { categories: CATS, cards: CARDS } = window.DECK;
   for (const c of CARDS) { c.alt ||= []; c.dx ||= []; c.pearl ||= ''; }
@@ -190,13 +191,54 @@
   let view = 'home';
   let session = null; // { queue, idx, results: [{id, verdict}], startedAt }
   let cur = null;     // { card, img, phase, verdict, pickedId, options }
+  let restored = null; // a saved `cur` for renderStudy to pick up instead of starting a fresh card
 
   const setView = (v) => {
     view = v;
     $$('.nav-btn').forEach((b) => (b.dataset.view === (v === 'study' || v === 'summary' ? 'home' : v) ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
     ({ home: renderHome, stats: renderStats, study: renderStudy, summary: renderSummary })[v]();
     window.scrollTo(0, 0);
+    saveSession();
   };
+
+  // ---------- resume an unfinished session ----------
+  // Only the study and summary screens are kept; leaving for setup or progress drops the saved session.
+  const saveSession = () => {
+    try {
+      if (!session || (view !== 'study' && view !== 'summary')) { localStorage.removeItem(SESSION_KEY); return; }
+      const c = view === 'study' && cur ? {
+        id: cur.card.id, first: cur.first, img: cur.img, more: cur.more, phase: cur.phase, verdict: cur.verdict,
+        pickedId: cur.pickedId, variant: !!cur.variant, options: cur.options && cur.options.map((o) => o.id), typed: cur.typed || '',
+      } : null;
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ view, session, cur: c, scrollY: Math.round(window.scrollY) }));
+    } catch { /* private mode etc. */ }
+  };
+
+  function restoreSession() {
+    let blob;
+    try { blob = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return false; }
+    const s = blob?.session;
+    const known = (id) => BY_ID.has(id);
+    if (!s || !Array.isArray(s.queue) || !s.queue.length || !s.queue.every(known) || !Array.isArray(s.results) || !s.results.every((r) => known(r.id))) return false;
+    if (blob.view === 'summary') {
+      session = s;
+      setView('summary');
+    } else if (blob.view === 'study') {
+      const c = blob.cur;
+      const card = c && Number.isInteger(s.idx) && BY_ID.get(s.queue[s.idx]);
+      if (!card || c.id !== card.id || !['ask', 'revealed'].includes(c.phase)) return false;
+      const photo = (i) => Number.isInteger(i) && i >= 0 && i < card.images.length;
+      if (!photo(c.first) || !photo(c.img)) return false;
+      const options = state.prefs.mode === 'mc' ? (Array.isArray(c.options) && c.options.every(known) ? c.options.map((id) => BY_ID.get(id)) : null) : null;
+      if (state.prefs.mode === 'mc' && !options) return false;
+      session = s;
+      (session.picks ||= {})[card.id] = c.first;
+      restored = { card, first: c.first, img: c.img, more: !!c.more && card.images.length > 1, phase: c.phase, verdict: c.verdict, pickedId: c.pickedId ?? null, variant: !!c.variant, options, typed: String(c.typed || '') };
+      setView('study');
+    } else return false;
+    window.scrollTo(0, blob.scrollY || 0);
+    return true;
+  }
 
   // ---------- home ----------
   function renderHome() {
@@ -287,7 +329,7 @@
     const id = session.queue[session.idx];
     const card = BY_ID.get(id);
     const first = questionPhoto(card);
-    cur = {
+    cur = restored || {
       card,
       first,            // the one photo this question is tied to
       img: first,       // the photo currently on screen (differs only while browsing extras)
@@ -296,8 +338,12 @@
       verdict: null,
       pickedId: null,
       options: state.prefs.mode === 'mc' ? makeOptions(card) : null,
+      typed: '',        // what is in the answer box, so a reload can put it back
     };
+    const resumed = restored?.phase === 'revealed';
+    restored = null;
     paintStudy();
+    if (resumed) showReveal(true);
     preloadNext();
   }
 
@@ -335,6 +381,7 @@
     wirePhoto();
     $('#more').innerHTML = moreHtml();
     if (cur.phase === 'revealed') $('#reveal').innerHTML = revealHtml(); // the caption follows the photo on screen
+    saveSession();
   }
 
   function toggleMore() {
@@ -342,6 +389,7 @@
     cur.more = !cur.more;
     if (!cur.more && cur.img !== cur.first) showImage(cur.first);
     else $('#more').innerHTML = moreHtml();
+    saveSession();
   }
 
   // Paint a new card. The photo is built once here and left alone on reveal, so it never reloads or flashes.
@@ -364,7 +412,7 @@
     wireAsk(mode);
   }
 
-  function showReveal() {
+  function showReveal(resuming = false) {
     const total = session.queue.length;
     const done = session.idx + 1;
     $('#interaction').innerHTML = state.prefs.mode === 'mc' ? markedChoicesHtml() : '';
@@ -372,7 +420,7 @@
     $('.progress').setAttribute('aria-valuenow', done);
     $('.progress > i').style.width = `${pct(done, total)}%`;
     $('[data-rate].default')?.focus({ preventScroll: true });
-    $('#reveal').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (!resuming) $('#reveal').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   function askHtml(mode) {
@@ -415,7 +463,7 @@
     };
     const choose = (id) => answer(id);
 
-    input.addEventListener('input', () => { matches = search(input.value); active = matches.length ? 0 : -1; paint(); });
+    input.addEventListener('input', () => { cur.typed = input.value; matches = search(input.value); active = matches.length ? 0 : -1; paint(); saveSession(); });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown' && matches.length) { e.preventDefault(); active = (active + 1) % matches.length; paint(); }
       else if (e.key === 'ArrowUp' && matches.length) { e.preventDefault(); active = (active - 1 + matches.length) % matches.length; paint(); }
@@ -437,6 +485,7 @@
     });
     input.addEventListener('blur', () => { setTimeout(() => { if (list.isConnected) { list.hidden = true; } }, 120); });
     input.addEventListener('focus', () => { if (matches.length) list.hidden = false; });
+    if (cur.typed) { input.value = cur.typed; matches = search(cur.typed); active = matches.length ? 0 : -1; paint(); }
     input.focus();
   }
 
@@ -448,6 +497,7 @@
     cur.variant = verdict === 'variant';
     cur.verdict = cur.variant ? 'correct' : verdict;
     showReveal();
+    saveSession();
   }
 
   function markedChoicesHtml() {
@@ -537,7 +587,7 @@
 
   function next() {
     session.idx++;
-    if (session.idx >= session.queue.length) setView('summary'); else renderStudy();
+    if (session.idx >= session.queue.length) setView('summary'); else { renderStudy(); saveSession(); }
   }
 
   // ---------- summary ----------
@@ -713,5 +763,10 @@
     } catch { alert('That file doesn’t look like a progress export.'); }
   }
 
-  setView('home');
+  // Remember where the page was scrolled, so a reload lands on the same part of the card.
+  let scrollTimer;
+  window.addEventListener('scroll', () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(saveSession, 200); }, { passive: true });
+  window.addEventListener('pagehide', saveSession);
+
+  if (!restoreSession()) setView('home');
 })();
