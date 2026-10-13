@@ -12,7 +12,7 @@
     1: { name: 'Core', blurb: 'Classic, bread-and-butter presentations you must not miss.' },
     2: { name: 'Intermediate', blurb: 'Board-level distinctions, variants and associations.' },
     3: { name: 'Advanced', blurb: 'Rare, syndromic or high-yield-but-obscure diagnoses.' },
-    4: { name: 'Extended', blurb: 'The rest of DermNet, rare conditions included. Photos only, no pearl.' },
+    4: { name: 'Extended', blurb: 'The rest of DermNet, rare conditions included. Pearls are summaries of the DermNet page.' },
   };
   const LEVEL_IDS = Object.keys(LEVELS).map(Number);
 
@@ -251,7 +251,7 @@
         <section class="panel hero stack">
           <div>
             <h1>What's the diagnosis?</h1>
-            <p class="lede">${CARDS.length.toLocaleString()} diagnoses and ${CARDS.reduce((n, c) => n + c.images.length, 0).toLocaleString()} clinical photos from DermNet. ${CARDS.filter((c) => c.pearl).length} of them are hand-reviewed with look-alikes and a board pearl; the rest add breadth, including rare conditions. Spaced repetition brings back what you miss.</p>
+            <p class="lede">${CARDS.length.toLocaleString()} diagnoses and ${CARDS.reduce((n, c) => n + c.images.length, 0).toLocaleString()} clinical photos from DermNet. ${CARDS.filter((c) => c.pearl).length} of them have a pearl. ${CARDS.filter((c) => c.lvl < 4).length} are hand-reviewed with look-alikes; the rest add breadth, including rare conditions, with pearls summarised from the DermNet page. Spaced repetition brings back what you miss.</p>
           </div>
 
           <fieldset class="fieldset"><legend>Difficulty</legend>

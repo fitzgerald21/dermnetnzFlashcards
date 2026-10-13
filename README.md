@@ -17,8 +17,9 @@ Photos load live from dermnetnz.org, so you need an internet connection.
 ## Studying
 
 - **Difficulty:** Core (118), Intermediate (93) and Advanced (42) are hand-reviewed, each with look-alikes and a
-  pearl. **Extended** (about 700) is the rest of DermNet's diagnoses, rare ones included: photos only, no pearl, and
-  look-alikes only where DermNet's own page lists a differential. Combine any tiers.
+  pearl. **Extended** (about 700) is the rest of DermNet's diagnoses, rare ones included: look-alikes only where
+  DermNet's own page lists a differential, and a short pearl summarised from that page (a few dozen thin or
+  photo-gallery-only pages have none). Combine any tiers.
 - **Topics:** 23 categories (papulosquamous, bullous, genodermatoses, nail, and so on). Extended cards are sorted
   by keyword, so a few land in the wrong topic or in "Other".
 - **Answer modes:**
@@ -53,6 +54,9 @@ difficulty, look-alikes, and the pearl. `scripts/build-deck.mjs` then reads **ev
    are really the same photos under two names ("Piezogenic papule" / "papules", Löfgren syndrome / erythema nodosum)
    are merged, and the merged name is kept as an accepted alias.
 4. Extended look-alikes are read from the page's "differential diagnosis" section; the topic is guessed from the name.
+5. Extended pearls come from `data/pearls.json` (keyed by card id). They were drafted from each card's own DermNet page text
+   (`node scripts/extract-page-text.mjs <dir>` writes that text in batches) and checked against it for numbers, genes and
+   other specifics; cards whose pages are image captions only have none.
 
 ```
 npm run build            # rebuild data/deck.js (pages are cached in .cache/ after the first run)
@@ -72,7 +76,9 @@ Optional per-card fields: `f` (regex a photo's title must match) and `x` (regex 
   and shows them unmodified and watermarked, with credit and a link to the source page on every card. DermNet's
   [image licence](https://dermnetnz.org/image-licence) permits this for education under CC BY-NC-ND 4.0:
   keep it non-commercial, and don't edit the images or remove watermarks. Unofficial; not affiliated with DermNet.
-- The pearls (core, intermediate and advanced cards only) are written for review and should be checked against your board text before you rely on them.
-  Treatment and approval details change.
+- The pearls are written for review and should be checked against your board text before you rely on them. Core,
+  intermediate and advanced pearls are hand-reviewed. Extended pearls (`data/pearls.json`) were drafted from each card's
+  own DermNet page and checked against it, so they carry DermNet's wording and emphasis rather than a board text's, and
+  can lag behind it. Treatment and approval details change.
 - The filter is heuristic. Some non-diagnosis pages may slip in, and some real diagnoses (for example Kawasaki
   disease, sporotrichosis, anogenital warts, RMSF) are missing because DermNet has no photos on their pages.

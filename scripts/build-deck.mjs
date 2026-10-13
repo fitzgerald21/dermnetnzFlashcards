@@ -3,7 +3,8 @@
 //
 //   1. Curated cards (data/diagnoses.mjs) keep their hand-written pearls and look-alikes.
 //   2. Every other DermNet topic that looks like a diagnosis is added as an "Extended" card (level 4).
-//      Look-alikes come from the topic's own "differential diagnosis" section; there is no pearl.
+//      Look-alikes come from the topic's own "differential diagnosis" section. Pearls come from
+//      data/pearls.json (summaries of the card's own DermNet page); cards without an entry have none.
 //
 // Images are not downloaded; the app links to DermNet directly.
 //
@@ -12,7 +13,7 @@
 //   node scripts/build-deck.mjs --report     # also write a classification report to <cache>/report.txt
 //   CACHE_DIR=/some/dir node scripts/build-deck.mjs
 
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CATEGORIES as CURATED_CATEGORIES, DIAGNOSES } from '../data/diagnoses.mjs';
@@ -44,6 +45,9 @@ async function main() {
     if (!CURATED_CATEGORIES[d.c]) throw new Error(`${d.s}: unknown category "${d.c}"`);
     if (![1, 2, 3].includes(d.l)) throw new Error(`${d.s}: bad level`);
   }
+
+  // ---- pearls for Extended cards, written from each card's own DermNet page
+  const PEARLS = JSON.parse(await readFile(path.join(ROOT, 'data', 'pearls.json'), 'utf8').catch(() => '{}'));
 
   // ---- read every topic page (cached after the first run)
   const slugs = await fetchSlugs(CACHE);
@@ -213,7 +217,8 @@ async function main() {
       }),
     };
     if (c.alt.length) out.alt = c.alt;
-    if (c.pearl) out.pearl = c.pearl;
+    const pearl = c.pearl || (c.lvl === 4 && PEARLS[c.id]) || '';
+    if (pearl) out.pearl = pearl;
     return out;
   });
 
