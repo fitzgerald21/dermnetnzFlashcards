@@ -184,6 +184,7 @@ select { min-height: 40px; padding: 6px 10px; border-radius: 10px; border: 1px s
 .reveal h2 { font-size: clamp(22px, 4vw, 28px); }
 .aka { color: var(--muted); font-size: 14px; }
 .pearl { padding: 12px 14px; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; }
+.pearl-src { margin-top: 6px; color: var(--muted); font-size: 13px; font-style: italic; }
 .dx { display: flex; gap: 6px; flex-wrap: wrap; }
 .dx span { padding: 3px 10px; border-radius: 99px; background: var(--surface-2); font-size: 14px; }
 .dx span.hit { background: var(--warn-soft); color: var(--warn); font-weight: 700; }

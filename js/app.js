@@ -539,7 +539,7 @@
             const name = d.id ? BY_ID.get(d.id).name : d.text;
             return `<span class="${d.id && d.id === pickedId ? 'hit' : ''}">${esc(name)}</span>`;
           }).join('')}</div></div>` : ''}
-        ${card.pearl ? `<div class="pearl">${esc(card.pearl)}</div>` : '<p class="muted small">No pearl for this one. The DermNet page below has the details.</p>'}
+        ${card.pearl ? `<div class="pearl">${esc(card.pearl)}${card.lvl === 4 ? '<div class="pearl-src">Summarized from DermNet</div>' : ''}</div>` : '<p class="muted small">No pearl for this one. The DermNet page below has the details.</p>'}
         <p class="small">Image sourced from <a href="${ORIGIN}/topics/${esc(card.id)}" target="_blank" rel="noopener">DermNet: ${esc(card.name)} ↗</a></p>
         <div>
           <div class="eyebrow" style="margin-bottom:6px">${flipMode ? 'How did you do?' : 'Schedule next review'}</div>
