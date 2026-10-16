@@ -42,7 +42,7 @@
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
   };
   const saved = load();
-  const state = { cards: saved.cards || {}, log: saved.log || {}, prefs: { ...DEFAULT_PREFS, ...(saved.prefs || {}) } };
+  const state = { cards: saved.cards || {}, log: saved.log || {}, photos: saved.photos || {}, prefs: { ...DEFAULT_PREFS, ...(saved.prefs || {}) } };
   // Before the Extended tier existed, "all levels" was [1, 2, 3]. Keep such users on "all".
   if (!saved.prefs?.v) {
     if ([1, 2, 3].every((l) => state.prefs.levels.includes(l))) state.prefs.levels = [1, 2, 3, 4];
@@ -62,7 +62,7 @@
       return n;
     }
     if (rating === 2) { n.i = n.r === 0 ? 1 : Math.max(1, Math.round(n.i * 1.2)); n.e = Math.max(1.3, n.e - 0.15); }
-    if (rating === 3) { n.i = n.r === 0 ? 1 : n.r === 1 ? 3 : Math.round(n.i * n.e); }
+    if (rating === 3) { n.i = n.r === 0 ? 3 : n.r === 1 ? 7 : Math.round(n.i * n.e); }
     if (rating === 4) { n.i = n.r === 0 ? 4 : Math.round(Math.max(n.i, 1) * n.e * 1.3); n.e += 0.15; }
     n.r++;
     n.due = Date.now() + n.i * DAY;
@@ -347,9 +347,25 @@
     preloadNext();
   }
 
+  // Photos already used as the question photo in this card's current cycle ({ s: [indices], l: last one shown }).
+  // A new question picks from the rest; once every photo has been used the cycle starts over, but never
+  // opens on the photo that just ended the previous cycle.
   const questionPhoto = (card) => {
     const picks = (session.picks ||= {});
-    return (picks[card.id] ??= Math.floor(Math.random() * card.images.length));
+    if (picks[card.id] !== undefined) return picks[card.id];
+    const n = card.images.length;
+    const p = state.photos[card.id];
+    const used = new Set(p?.s || []);
+    let pool = Array.from({ length: n }, (_, i) => i).filter((i) => !used.has(i));
+    if (pool.length === n && n > 1 && p?.l !== undefined) pool = pool.filter((i) => i !== p.l);
+    if (!pool.length) pool = Array.from({ length: n }, (_, i) => i);
+    return (picks[card.id] = pool[Math.floor(Math.random() * pool.length)]);
+  };
+  const markPhoto = (card, i) => {
+    const p = (state.photos[card.id] ||= { s: [], l: i });
+    if (!p.s.includes(i)) p.s.push(i);
+    p.l = i;
+    if (p.s.length >= card.images.length) p.s = [];
   };
 
   function preloadNext() {
@@ -575,6 +591,7 @@
     if (cur.phase !== 'revealed') return;
     cur.phase = 'rated';
     const verdict = state.prefs.mode === 'flip' ? (rating >= 3 ? 'correct' : 'wrong') : cur.verdict;
+    markPhoto(cur.card, cur.first);
     record(cur.card, rating, verdict === 'skipped' ? 'wrong' : verdict, cur.pickedId);
     session.results.push({ id: cur.card.id, verdict, rating });
     if (rating === 1) {
@@ -690,7 +707,7 @@
       else if (a === 'giveup') answer(null);
       else if (a === 'more') toggleMore();
       else if (a === 'export') exportData();
-      else if (a === 'reset') { if (confirm('Erase all saved progress? This cannot be undone.')) { state.cards = {}; state.log = {}; save(); renderStats(); } }
+      else if (a === 'reset') { if (confirm('Erase all saved progress? This cannot be undone.')) { state.cards = {}; state.log = {}; state.photos = {}; save(); renderStats(); } }
     } else if (t.dataset.level) {
       const l = Number(t.dataset.level);
       const set = new Set(state.prefs.levels);
@@ -757,7 +774,7 @@
     try {
       const data = JSON.parse(await file.text());
       if (typeof data.cards !== 'object') throw new Error('bad file');
-      state.cards = data.cards; state.log = data.log || {};
+      state.cards = data.cards; state.log = data.log || {}; state.photos = data.photos || {};
       state.prefs = { ...DEFAULT_PREFS, ...(data.prefs || {}) };
       save(); renderStats();
     } catch { alert('That file doesn’t look like a progress export.'); }
